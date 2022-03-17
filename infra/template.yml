@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Creates an API Gateway of the type WebSocket integrates to a Lambda function
+
+Parameters:
+  ApiName:
+    Type: String
+    Default: ApiGatewayWebSocket
+
+  StageName:
+    Type: String
+    Default: dev
+
+  Owner:
+    Type: String
+    Default: tg
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ApiName}ExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub ${ApiName}ExecutionRolePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  Lambda:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaExecutionRole
+    Properties:
+      FunctionName: !Ref ApiName
+      Runtime: nodejs14.x
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          exports.handler = async (event, context) => {
+            console.log('event', JSON.stringify(event));
+            console.log('context', JSON.stringify('context'));
+            return { 
+              statusCode: 200, 
+              body: JSON.stringify({ msg: 'connected'})
+            };
+          };
+      Tags:
+        - Key: Owner
+          Value: !Ref Owner
+
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref ApiName
+      Description: !Ref ApiName
+      Version: v1
+      ProtocolType: WEBSOCKET
+      DisableExecuteApiEndpoint: false
+      DisableSchemaValidation: false
+      RouteSelectionExpression: $request.body.action
+      # ApiKeySelectionExpression: $request.header.x-api-key
+
+  ConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      Description: !Ref ApiName
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda.Arn}/invocations
+
+  DefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      Description: !Ref ApiName
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda.Arn}/invocations
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn: ConnectIntegration
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: $connect
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Target: !Join ["/", [integrations, !Ref ConnectIntegration]]
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn: DefaultIntegration
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: $default
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Target: !Join ["/", [integrations, !Ref DefaultIntegration]]
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn: [ConnectRoute, DefaultRoute]
+    Properties:
+      ApiId: !Ref Api
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: !Ref StageName
+      Description: !Ref StageName
+      ApiId: !Ref Api
+      AutoDeploy: false
+      DeploymentId: !Ref Deployment
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: Deployment
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt Lambda.Arn
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  ApiGatewayId:
+    Value: !Ref Api
