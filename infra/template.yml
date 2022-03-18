@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: 2010-09-09
 
-Description: Creates an API Gateway of the type WebSocket integrates to a Lambda function
+Description: Creates a WebSocket API Gateway and a Lambda function as the backend
 
 Parameters:
   ApiName:
@@ -54,10 +54,9 @@ Resources:
         ZipFile: |
           exports.handler = async (event, context) => {
             console.log('event', JSON.stringify(event));
-            console.log('context', JSON.stringify('context'));
             return { 
               statusCode: 200, 
-              body: JSON.stringify({ msg: 'connected'})
+              body: JSON.stringify({ message: 'connected'})
             };
           };
       Tags:
@@ -74,7 +73,6 @@ Resources:
       DisableExecuteApiEndpoint: false
       DisableSchemaValidation: false
       RouteSelectionExpression: $request.body.action
-      # ApiKeySelectionExpression: $request.header.x-api-key
 
   ConnectIntegration:
     Type: AWS::ApiGatewayV2::Integration
