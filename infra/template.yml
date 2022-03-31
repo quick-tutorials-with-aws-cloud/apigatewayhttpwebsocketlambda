@@ -54,14 +54,30 @@ Resources:
         ZipFile: |
           exports.handler = async (event, context) => {
             console.log('event', JSON.stringify(event));
-            return { 
-              statusCode: 200, 
-              body: JSON.stringify({ message: 'connected'})
-            };
+            if (event.requestContext.routeKey == "$default") {
+              console.log("Message has received");
+              return {  statusCode: 200, body: null };
+            } else if (event.requestContext.routeKey == "$connect") {
+              console.log("WebSocket has connected");
+              return {  statusCode: 200, body: null };
+            } else if (event.requestContext.routeKey == "$disconnect") {
+              console.log("WebSocket has disconnected");
+              return {  statusCode: 200, body: null };
+            } else {
+              context.fail("routeKey invalid");
+            }
           };
       Tags:
         - Key: Owner
           Value: !Ref Owner
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: Lambda
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt Lambda.Arn
+      Principal: apigateway.amazonaws.com
 
   Api:
     Type: AWS::ApiGatewayV2::Api
@@ -74,7 +90,7 @@ Resources:
       DisableSchemaValidation: false
       RouteSelectionExpression: $request.body.action
 
-  ConnectIntegration:
+  DefaultIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref Api
@@ -83,7 +99,17 @@ Resources:
       IntegrationMethod: POST
       IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda.Arn}/invocations
 
-  DefaultIntegration:
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn: DefaultIntegration
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: $default
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Target: !Join ["/", [integrations, !Ref DefaultIntegration]]
+
+  ConnectIntegration:
     Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref Api
@@ -102,19 +128,28 @@ Resources:
       ApiKeyRequired: false
       Target: !Join ["/", [integrations, !Ref ConnectIntegration]]
 
-  DefaultRoute:
-    Type: AWS::ApiGatewayV2::Route
-    DependsOn: DefaultIntegration
+  DisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
       ApiId: !Ref Api
-      RouteKey: $default
+      Description: !Ref ApiName
+      IntegrationType: AWS_PROXY
+      IntegrationMethod: POST
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda.Arn}/invocations
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn: DisconnectIntegration
+    Properties:
+      ApiId: !Ref Api
+      RouteKey: $disconnect
       AuthorizationType: NONE
       ApiKeyRequired: false
-      Target: !Join ["/", [integrations, !Ref DefaultIntegration]]
+      Target: !Join ["/", [integrations, !Ref DisconnectIntegration]]
 
   Deployment:
     Type: AWS::ApiGatewayV2::Deployment
-    DependsOn: [ConnectRoute, DefaultRoute]
+    DependsOn: [DefaultRoute, ConnectRoute, DisconnectRoute]
     Properties:
       ApiId: !Ref Api
 
@@ -126,14 +161,6 @@ Resources:
       ApiId: !Ref Api
       AutoDeploy: false
       DeploymentId: !Ref Deployment
-
-  LambdaPermission:
-    Type: AWS::Lambda::Permission
-    DependsOn: Deployment
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt Lambda.Arn
-      Principal: apigateway.amazonaws.com
 
 Outputs:
   ApiGatewayId:
